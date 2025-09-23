@@ -1,0 +1,47 @@
+{
+	"name" : "EtfToolsExtractdata",
+	"display_name" : "ETF Extract Data",
+	"description" : "<p>ETF Extract Data</p>",
+	"module_type" : "packages",
+	"app_type" : "fintech",
+	"category" : "etf",
+	"version" : "0.0.0",
+	"repo" : "https://github.com/sp-fintech-auetfs/fintech-packages-etf-etftoolsextractdata",
+	"class" : "Apps\\Fintech\\Packages\\Etf\\Tools\\Extractdata\\EtfToolsExtractdata",
+	"dependencies" : 
+	{
+		"core" : 
+		{
+			"name" : "Core",
+			"version" : "0.0.0-rc.12",
+			"repo" : "https://github.com/sp-framework/core"
+		},
+		"apptype" : 
+		{
+			"name" : "Fintech",
+			"version" : "0.3.0",
+			"repo" : "https://github.com/sp-fintech/fintech"
+		},
+		"packages" : [],
+		"middlewares" : [],
+		"externals" : 
+		{
+			"composer" : 
+			{
+				"require" : []
+			},
+			"config" : 
+			{
+				"allow-plugins" : []
+			},
+			"extra" : 
+			{
+				"patches" : []
+			}
+		}
+	},
+	"settings" : 
+	{
+		"api_clients" : []
+	}
+}
