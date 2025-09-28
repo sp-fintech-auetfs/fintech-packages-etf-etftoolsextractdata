@@ -952,6 +952,11 @@ class EtfToolsExtractdata extends BasePackage
             return false;
         }
 
+        if ($this->opCache) {
+            $this->opCache->removeCache('dashboards', 'core');
+            $this->opCache->removeCache('widgets', 'core');
+        }
+
         return true;
     }
 
