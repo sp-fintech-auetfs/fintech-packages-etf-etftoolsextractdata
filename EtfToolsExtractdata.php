@@ -236,29 +236,29 @@ class EtfToolsExtractdata extends BasePackage
         return false;
     }
 
-    protected function cleanup($type)
+    protected function cleanup()
     {
         try {
             $scanDir = $this->basepackages->utils->scanDir($this->destDir, false);
 
             if ($scanDir && count($scanDir['files']) > 0) {
                 foreach ($scanDir['files'] as $file) {
-                    if ($type === '-funds') {
-                        if (!str_starts_with($file, $this->year) &&
-                            str_contains($file, $type)
-                        ) {
-                            $this->localContent->delete($file);
-                        }
-                    } else {
-                        if (!str_starts_with($file, $this->today) &&
-                            str_contains($file, $type)
-                        ) {
-                            $this->localContent->delete($file);
-                        }
+                    if (str_ends_with($file, '.zip') &&
+                        !str_contains($file, $this->today)
+                    ) {
+                        $this->localContent->delete($file);
                     }
                 }
             }
-        } catch (UnableToDeleteFile | \throwable | FilesystemException $e) {
+
+            if ($scanDir && count($scanDir['dirs']) > 0) {
+                foreach ($scanDir['dirs'] as $dir) {
+                    if (!str_contains($dir, $this->today)) {
+                        $this->localContent->deleteDirectory($dir);
+                    }
+                }
+            }
+        } catch (UnableToDeleteFile | UnableToDeleteDirectory | \throwable | FilesystemException $e) {
             $this->addResponse($e->getMessage(), 1);
 
             return false;
@@ -533,6 +533,7 @@ class EtfToolsExtractdata extends BasePackage
                 $scheme['scheme_name'] = $schemeData['betashares']['display_name'];
                 $scheme['launch_date'] = $schemeData['betashares']['inception_date'];
                 $scheme['latest_nav'] = 0;
+                $scheme['nav_multiplier'] = 1;
                 if ($scheme['launch_date'] !== '') {
                     if (!isset($this->parsedCarbon[$scheme['launch_date']])) {
                         $this->parsedCarbon[$scheme['launch_date']] = \Carbon\Carbon::parse($scheme['launch_date']);
@@ -543,6 +544,10 @@ class EtfToolsExtractdata extends BasePackage
                 $scheme['minimum_amount'] = null;
                 $scheme['expense_ratio_type'] = 'Direct';
                 $scheme['plan_type'] = 'Growth';
+                $scheme['dividend_frequency'] = null;
+                if (isset($schemeData['betashares']['dividend_frequency'])) {
+                    $scheme['dividend_frequency'] = $schemeData['betashares']['dividend_frequency'];
+                }
                 $scheme['management_type'] = $schemeData['betashares']['management_approach'];
                 $scheme['scheme_md5'] = null;
                 $scheme['navs_last_updated'] = null;
@@ -654,7 +659,7 @@ class EtfToolsExtractdata extends BasePackage
             }
 
             //To reimport everything!! Comment if not used.
-            // $data['get_all_navs'] = true;
+            $data['get_all_navs'] = true;
 
             for ($i = 0; $i < $dbCount; $i++) {
                 $this->basepackages->utils->setMicroTimer('Start');
@@ -712,10 +717,39 @@ class EtfToolsExtractdata extends BasePackage
                     }
                 }
 
-                $etfNavsArr = array_values($etfNavsArr['quote']);
+                //For any Splits
+                $navSplits = 1;
+                if (isset($etfNavsArr['events']['splits'])) {
+                    if (count($etfNavsArr['events']['splits']) === 1) {
+                        $split = $this->helper->first($etfNavsArr['events']['splits']);
 
-                if (($etfNavsArr && count($etfNavsArr) === 1) ||
-                    (($etfNavsArr && count($etfNavsArr) <= 2) && (isset($etfNavsArr[1]['date']) && $etfNavsArr[0]['date'] === $etfNavsArr[1]['date']))
+                        $navSplits = ($navSplits * $split['numerator']) / $split['denominator'];
+                    } else {
+                        $navSplits = 1;
+                        //Need to analyze this
+                    }
+                }
+
+                //For Dividend calculation
+                $navMultiplier = 1;
+                if (!isset($data['get_all_navs']) &&
+                    isset($this->schemes[$i]['dividend_frequency'])
+                ) {
+                    if (isset($this->schemes[$i]['nav_multiplier'])) {
+                        $navMultiplier = &$this->schemes[$i]['nav_multiplier'];
+                    } else {
+                        $this->schemes[$i]['nav_multiplier'] = $navMultiplier = 1;
+                    }
+                }
+
+                if ($navSplits !== 1) {
+                    $navMultiplier = $navMultiplier * $navSplits;
+                }
+
+                $etfNavsArrQuote = array_values($etfNavsArr['quote']);
+
+                if (($etfNavsArrQuote && count($etfNavsArrQuote) === 1) ||
+                    (($etfNavsArrQuote && count($etfNavsArrQuote) <= 2) && (isset($etfNavsArrQuote[1]['date']) && $etfNavsArrQuote[0]['date'] === $etfNavsArrQuote[1]['date']))
                 ) {
                     try {
                         if ($this->localContent->fileExists('.ff/sp/apps_fintech_etf_schemes/data/' . $this->schemes[$i]['id'] . '.json')) {
@@ -734,15 +768,15 @@ class EtfToolsExtractdata extends BasePackage
                     }
                 }
 
-                if (!isset($this->parsedCarbon[$this->helper->last($etfNavsArr)['date']])) {
-                    $this->parsedCarbon[$this->helper->last($etfNavsArr)['date']] = \Carbon\Carbon::parse($this->helper->last($etfNavsArr)['date']);
+                if (!isset($this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']])) {
+                    $this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']] = \Carbon\Carbon::parse($this->helper->last($etfNavsArrQuote)['date']);
                 }
 
                 if (!isset($this->parsedCarbon[$this->today])) {
                     $this->parsedCarbon[$this->today] = \Carbon\Carbon::parse($this->today);
                 }
 
-                $numberOfDays = $this->parsedCarbon[$this->helper->last($etfNavsArr)['date']]->diffInDays($this->parsedCarbon[$this->today]) + 1;
+                $numberOfDays = $this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']]->diffInDays($this->parsedCarbon[$this->today]) + 1;
 
                 //We remove the scheme if it is retired, no update from last 30 days
                 //This is an assumption that we will we will be updating the scheme database everyday.
@@ -765,9 +799,9 @@ class EtfToolsExtractdata extends BasePackage
                 }
 
                 if (!isset($this->schemes[$i]['start_date']) ||
-                    (isset($this->schemes[$i]['start_date']) && $this->schemes[$i]['start_date'] != $this->helper->first($etfNavsArr)['date'])
+                    (isset($this->schemes[$i]['start_date']) && $this->schemes[$i]['start_date'] != $this->helper->first($etfNavsArrQuote)['date'])
                 ) {
-                    $this->schemes[$i]['start_date'] = $this->helper->first($etfNavsArr)['date'];
+                    $this->schemes[$i]['start_date'] = $this->helper->first($etfNavsArrQuote)['date'];
 
                     try {
                         $this->localContent->write('.ff/sp/apps_fintech_etf_schemes/data/' . $this->schemes[$i]['id'] . '.json', $this->helper->encode($this->schemes[$i]));
@@ -780,8 +814,8 @@ class EtfToolsExtractdata extends BasePackage
 
                 $etfNavs = [];
 
-                for ($etfNavsArrKey = 0; $etfNavsArrKey < count($etfNavsArr); $etfNavsArrKey++) {
-                    $etfNavs[$etfNavsArr[$etfNavsArrKey]['date']] = $etfNavsArr[$etfNavsArrKey];
+                for ($etfNavsArrQuoteKey = 0; $etfNavsArrQuoteKey < count($etfNavsArrQuote); $etfNavsArrQuoteKey++) {
+                    $etfNavs[$etfNavsArrQuote[$etfNavsArrQuoteKey]['date']] = $etfNavsArrQuote[$etfNavsArrQuoteKey];
                 }
 
                 $dbNav = null;
@@ -850,26 +884,33 @@ class EtfToolsExtractdata extends BasePackage
 
                 foreach ($etfNavs as $etfNavKey => $etfNav) {
                     if (!isset($dbNav['navs'][$etfNav['date']])) {
+                        //Add dividend to NAV
+                        if (isset($etfNav['dividends_amount'])) {
+                            $navMultiplier = ($etfNav['close'] + $etfNav['dividends_amount']) / $etfNav['close'];
+                            $dbNav['navs'][$etfNav['date']]['dividends_amount'] = $etfNav['dividends_amount'];
+                        } else {
+                            $dbNav['navs'][$etfNav['date']]['dividends_amount'] = 0;
+                        }
+
                         $dbNav['navs'][$etfNav['date']]['nav'] = $etfNav['close'];
+                        $dbNav['navs'][$etfNav['date']]['nav_multiplier'] = $navMultiplier;
+                        $dbNav['navs'][$etfNav['date']]['nav_with_div'] = $etfNav['close'] * $navMultiplier;
                         $dbNav['navs'][$etfNav['date']]['date'] = $etfNav['date'];
                         if (!isset($this->parsedCarbon[$etfNav['date']])) {
                             $this->parsedCarbon[$etfNav['date']] = \Carbon\Carbon::parse($etfNav['date']);
                         }
 
                         $dbNav['navs'][$etfNav['date']]['timestamp'] = $this->parsedCarbon[$etfNav['date']]->timestamp;
+                        $dbNav['navs'][$etfNav['date']]['trajectory'] = '-';
                         $dbNav['navs'][$etfNav['date']]['diff'] = 0;
                         $dbNav['navs'][$etfNav['date']]['diff_percent'] = 0;
-                        $dbNav['navs'][$etfNav['date']]['trajectory'] = '-';
                         $dbNav['navs'][$etfNav['date']]['diff_since_inception'] = 0;
                         $dbNav['navs'][$etfNav['date']]['diff_percent_since_inception'] = 0;
+                        $dbNav['navs'][$etfNav['date']]['reinvest_diff'] = 0;
+                        $dbNav['navs'][$etfNav['date']]['reinvest_diff_percent'] = 0;
 
                         if ($etfNavKey !== 0) {
                             $previousDay = $etfNavs[$etfNavKey - 1];
-
-                            $dbNav['navs'][$etfNav['date']]['diff'] =
-                                numberFormatPrecision($etfNav['close'] - $previousDay['close'], 4);
-                            $dbNav['navs'][$etfNav['date']]['diff_percent'] =
-                                numberFormatPrecision(($etfNav['close'] * 100 / $previousDay['close']) - 100, 2);
 
                             if ($etfNav['close'] > $previousDay['close']) {
                                 $dbNav['navs'][$etfNav['date']]['trajectory'] = 'up';
@@ -877,9 +918,20 @@ class EtfToolsExtractdata extends BasePackage
                                 $dbNav['navs'][$etfNav['date']]['trajectory'] = 'down';
                             }
 
+                            $dbNav['navs'][$etfNav['date']]['diff'] =
+                                numberFormatPrecision($etfNav['close'] - $previousDay['close'], 4);
+                            $dbNav['navs'][$etfNav['date']]['diff_percent'] =
+                                numberFormatPrecision(($etfNav['close'] * 100 / $previousDay['close']) - 100, 2);
+
                             $dbNav['navs'][$etfNav['date']]['diff_since_inception'] =
                                 numberFormatPrecision($etfNav['close'] - $firstEtfNavs['close'], 4);
                             $dbNav['navs'][$etfNav['date']]['diff_percent_since_inception'] =
+                                numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
+
+                            $etfNav['close'] = $etfNav['close'] * $navMultiplier;
+                            $dbNav['navs'][$etfNav['date']]['reinvest_diff'] =
+                                numberFormatPrecision($etfNav['close'] - $firstEtfNavs['close'], 4);
+                            $dbNav['navs'][$etfNav['date']]['reinvest_diff_percent'] =
                                 numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
                         }
 
@@ -926,7 +978,6 @@ class EtfToolsExtractdata extends BasePackage
                 $this->processUpdateTimer($dbCount, $i + 1);
             }
         } catch (\throwable $e) {
-            trace([$e]);
             if (isset($data['scheme_id'])) {
                 $schemeId = $data['scheme_id'];
             } else {
@@ -956,6 +1007,8 @@ class EtfToolsExtractdata extends BasePackage
             $this->opCache->removeCache('dashboards', 'core');
             $this->opCache->removeCache('widgets', 'core');
         }
+
+        $this->cleanup();
 
         return true;
     }
@@ -1043,14 +1096,35 @@ class EtfToolsExtractdata extends BasePackage
                 if (count($timeDateChunks) > 0) {
                     $chunks['navs_chunks'][$time] = [];
 
+                    $firstNav = $this->helper->first($timeDateChunks)['nav'];
+
+                    $navMultiplier = 1;
                     foreach ($timeDateChunks as $timeDateChunkDate => $timeDateChunk) {
+                        //Add dividend to NAV
+                        if (isset($timeDateChunk['dividends_amount']) && $timeDateChunk['dividends_amount'] > 0) {
+                            $navMultiplier = ($timeDateChunk['nav'] + $timeDateChunk['dividends_amount']) / $timeDateChunk['nav'];
+                            $chunks['navs_chunks'][$time][$timeDateChunkDate]['dividends_amount'] = $timeDateChunk['dividends_amount'];
+                        } else {
+                            $chunks['navs_chunks'][$time][$timeDateChunkDate]['dividends_amount'] = 0;
+                        }
+
                         $chunks['navs_chunks'][$time][$timeDateChunkDate] = [];
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['date'] = $timeDateChunk['date'];
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['nav'] = $timeDateChunk['nav'];
+                        $chunks['navs_chunks'][$time][$timeDateChunkDate]['nav_multiplier'] = $navMultiplier;
+                        $chunks['navs_chunks'][$time][$timeDateChunkDate]['nav_with_div'] = $timeDateChunk['nav'] * $navMultiplier;
+
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['diff'] =
                             numberFormatPrecision($timeDateChunk['nav'] - $this->helper->first($timeDateChunks)['nav'], 4);
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['diff_percent'] =
                             numberFormatPrecision(($timeDateChunk['nav'] * 100 / $this->helper->first($timeDateChunks)['nav'] - 100), 2);
+
+                        //Calculate Dividend Reinvest
+                        $timeDateChunk['nav'] = $timeDateChunk['nav'] * $navMultiplier;
+                        $chunks['navs_chunks'][$time][$timeDateChunkDate]['reinvest_diff'] =
+                            numberFormatPrecision($timeDateChunk['nav'] - $firstNav, 4);
+                        $chunks['navs_chunks'][$time][$timeDateChunkDate]['reinvest_diff_percent'] =
+                            numberFormatPrecision(($timeDateChunk['nav'] * 100 / $firstNav) - 100, 2);
                     }
                 }
             }
@@ -1315,7 +1389,7 @@ class EtfToolsExtractdata extends BasePackage
                         $rr[$rrTerm][$date]['from'] = $date;
                         $rr[$rrTerm][$date]['to'] = $toDate;
                         $rr[$rrTerm][$date]['cagr'] =
-                            numberFormatPrecision((pow(($dbNavNavs[$toDate]['nav']/$nav['nav']),(1/$time)) - 1) * 100);
+                            numberFormatPrecision((pow(($dbNavNavs[$toDate]['nav_with_div']/$nav['nav_with_div']),(1/$time)) - 1) * 100);
 
                         if ($toDate === $this->helper->last($dbNavNavs)['date']) {
                             $schemeRr[$rrTerm . '_cagr'] = $rr[$rrTerm][$date]['cagr'];
@@ -1431,30 +1505,30 @@ class EtfToolsExtractdata extends BasePackage
         });
     }
 
-    protected function fillEtfNavDays($etfNavsArr, $aetfiCode)
+    protected function fillEtfNavDays($etfNavsArrQuote, $aetfiCode)
     {
-        if (!isset($this->parsedCarbon[$this->helper->first($etfNavsArr)['date']])) {
-            $this->parsedCarbon[$this->helper->first($etfNavsArr)['date']] = \Carbon\Carbon::parse($this->helper->first($etfNavsArr)['date']);
+        if (!isset($this->parsedCarbon[$this->helper->first($etfNavsArrQuote)['date']])) {
+            $this->parsedCarbon[$this->helper->first($etfNavsArrQuote)['date']] = \Carbon\Carbon::parse($this->helper->first($etfNavsArrQuote)['date']);
         }
-        if (!isset($this->parsedCarbon[$this->helper->last($etfNavsArr)['date']])) {
-            $this->parsedCarbon[$this->helper->last($etfNavsArr)['date']] = \Carbon\Carbon::parse($this->helper->last($etfNavsArr)['date']);
+        if (!isset($this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']])) {
+            $this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']] = \Carbon\Carbon::parse($this->helper->last($etfNavsArrQuote)['date']);
         }
 
         //Include last day in calculation
-        $numberOfDays = $this->parsedCarbon[$this->helper->first($etfNavsArr)['date']]->diffInDays($this->parsedCarbon[$this->helper->last($etfNavsArr)['date']]) + 1;
+        $numberOfDays = $this->parsedCarbon[$this->helper->first($etfNavsArrQuote)['date']]->diffInDays($this->parsedCarbon[$this->helper->last($etfNavsArrQuote)['date']]) + 1;
 
-        if ($numberOfDays != count($etfNavsArr)) {
+        if ($numberOfDays != count($etfNavsArrQuote)) {
             $etfNavs = [];
 
-            foreach ($etfNavsArr as $etfNavKey => $etfNav) {
+            foreach ($etfNavsArrQuote as $etfNavKey => $etfNav) {
                 $etfNavs[$etfNav['date']] = $etfNav;
 
-                if (isset($etfNavsArr[$etfNavKey + 1])) {
+                if (isset($etfNavsArrQuote[$etfNavKey + 1])) {
                     $currentDate = \Carbon\Carbon::parse($etfNav['date']);
-                    if (!isset($this->parsedCarbon[$etfNavsArr[$etfNavKey + 1]['date']])) {
-                        $this->parsedCarbon[$etfNavsArr[$etfNavKey + 1]['date']] = \Carbon\Carbon::parse($etfNavsArr[$etfNavKey + 1]['date']);
+                    if (!isset($this->parsedCarbon[$etfNavsArrQuote[$etfNavKey + 1]['date']])) {
+                        $this->parsedCarbon[$etfNavsArrQuote[$etfNavKey + 1]['date']] = \Carbon\Carbon::parse($etfNavsArrQuote[$etfNavKey + 1]['date']);
                     }
-                    $nextDate = $this->parsedCarbon[$etfNavsArr[$etfNavKey + 1]['date']];
+                    $nextDate = $this->parsedCarbon[$etfNavsArrQuote[$etfNavKey + 1]['date']];
                     $differenceDays = $currentDate->diffInDays($nextDate);
 
                     if ($differenceDays > 1) {
@@ -1478,7 +1552,7 @@ class EtfToolsExtractdata extends BasePackage
             return array_values($etfNavs);
         }
 
-        return $etfNavsArr;
+        return $etfNavsArrQuote;
     }
 
     protected function reIndexEtfSchemesData()
