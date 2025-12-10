@@ -659,7 +659,7 @@ class EtfToolsExtractdata extends BasePackage
             }
 
             //To reimport everything!! Comment if not used.
-            $data['get_all_navs'] = true;
+            // $data['get_all_navs'] = true;
 
             for ($i = 0; $i < $dbCount; $i++) {
                 $this->basepackages->utils->setMicroTimer('Start');
@@ -732,6 +732,7 @@ class EtfToolsExtractdata extends BasePackage
 
                 //For Dividend calculation
                 $navMultiplier = 1;
+                $schemeDividends = 0;
                 if (!isset($data['get_all_navs']) &&
                     isset($this->schemes[$i]['dividend_frequency'])
                 ) {
@@ -886,8 +887,9 @@ class EtfToolsExtractdata extends BasePackage
                     if (!isset($dbNav['navs'][$etfNav['date']])) {
                         //Add dividend to NAV
                         if (isset($etfNav['dividends_amount'])) {
-                            $navMultiplier = ($etfNav['close'] + $etfNav['dividends_amount']) / $etfNav['close'];
+                            // $navMultiplier = ($etfNav['close'] + $etfNav['dividends_amount']) / $etfNav['close'];
                             $dbNav['navs'][$etfNav['date']]['dividends_amount'] = $etfNav['dividends_amount'];
+                            $schemeDividends += $etfNav['dividends_amount'];
                         } else {
                             $dbNav['navs'][$etfNav['date']]['dividends_amount'] = 0;
                         }
@@ -928,11 +930,28 @@ class EtfToolsExtractdata extends BasePackage
                             $dbNav['navs'][$etfNav['date']]['diff_percent_since_inception'] =
                                 numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
 
-                            $etfNav['close'] = $etfNav['close'] * $navMultiplier;
+                            // $etfNav['close'] = $etfNav['close'] * $navMultiplier;
                             $dbNav['navs'][$etfNav['date']]['reinvest_diff'] =
                                 numberFormatPrecision($etfNav['close'] - $firstEtfNavs['close'], 4);
+                            // $dbNav['navs'][$etfNav['date']]['reinvest_diff_percent'] =
+                            //     numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
+
+                            // Closing market price 5 years ago: $2.48
+                            // This is called your 'cost price', and can be obtained by switching from 'total return' to 'price' at the top left of the chart,
+                            // and dragging your cursor all the way to the beginning.
+                            // Closing market price 5 years later: $2.49
+                            // This is called your 'capital gain (or loss)', and can be obtained by switching from 'total return' to 'price' at the top left of the chart,
+                            // and dragging your cursor all the way to the end.
+                            // Distributions earned within the time period (5 years)
+                            // 01/07/2024: $0.1071870
+                            // 01/07/2025: $1.5505820
+                            // Total Return = (capital gain + (sum of distributions) - cost price) / cost price
+                            // Plug in the values:
+                            // (2.49 + (0.1071870 + 1.5505820) - 2.48) / 2.48 = 0.672488
+                            // Total return = ~67.25% (as per response from betashares)
+                            $etfNav['close'] = $etfNav['close'] + $schemeDividends;
                             $dbNav['navs'][$etfNav['date']]['reinvest_diff_percent'] =
-                                numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
+                                round((($etfNav['close'] - $firstEtfNavs['close']) / $firstEtfNavs['close']) * 100, 2);
                         }
 
                         if ($newNavs !== false) {
@@ -1099,11 +1118,13 @@ class EtfToolsExtractdata extends BasePackage
                     $firstNav = $this->helper->first($timeDateChunks)['nav'];
 
                     $navMultiplier = 1;
+                    $schemeDividends = 0;
                     foreach ($timeDateChunks as $timeDateChunkDate => $timeDateChunk) {
                         //Add dividend to NAV
                         if (isset($timeDateChunk['dividends_amount']) && $timeDateChunk['dividends_amount'] > 0) {
-                            $navMultiplier = ($timeDateChunk['nav'] + $timeDateChunk['dividends_amount']) / $timeDateChunk['nav'];
+                            // $navMultiplier = ($timeDateChunk['nav'] + $timeDateChunk['dividends_amount']) / $timeDateChunk['nav'];
                             $chunks['navs_chunks'][$time][$timeDateChunkDate]['dividends_amount'] = $timeDateChunk['dividends_amount'];
+                            $schemeDividends += $timeDateChunk['dividends_amount'];
                         } else {
                             $chunks['navs_chunks'][$time][$timeDateChunkDate]['dividends_amount'] = 0;
                         }
@@ -1120,11 +1141,14 @@ class EtfToolsExtractdata extends BasePackage
                             numberFormatPrecision(($timeDateChunk['nav'] * 100 / $this->helper->first($timeDateChunks)['nav'] - 100), 2);
 
                         //Calculate Dividend Reinvest
-                        $timeDateChunk['nav'] = $timeDateChunk['nav'] * $navMultiplier;
+                        // $timeDateChunk['nav'] = $timeDateChunk['nav'] * $navMultiplier;
+                        $timeDateChunk['nav'] = $timeDateChunk['nav'] + $schemeDividends;
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['reinvest_diff'] =
                             numberFormatPrecision($timeDateChunk['nav'] - $firstNav, 4);
+                        // $chunks['navs_chunks'][$time][$timeDateChunkDate]['reinvest_diff_percent'] =
+                        //     numberFormatPrecision(($timeDateChunk['nav'] * 100 / $firstNav) - 100, 2);
                         $chunks['navs_chunks'][$time][$timeDateChunkDate]['reinvest_diff_percent'] =
-                            numberFormatPrecision(($timeDateChunk['nav'] * 100 / $firstNav) - 100, 2);
+                            round((($timeDateChunk['nav'] - $firstNav) / $firstNav) * 100, 2);
                     }
                 }
             }
