@@ -311,12 +311,15 @@ class EtfToolsExtractdata extends BasePackage
         //So, the scheme ID will become 171522 for 1GOV ticker.
         //To Obtain the data from Betashare, login and go to this link:
         //https://direct.betashares.com.au/invest/screener?kind=etf&size=500
+        //08/01/2026 - CURRENT NUMBER OF ETFs ON BETASHARES IS 457 (CHANGE THIS NUMBER WHENEVER YOU OBTAIN A NEW DATA)
         //Under browser inspect, look for a POST request with URL: https://search.betashares.services/search
         //The response will show you all schemes. Copy the results value and paste it in a betashare.json file in DATA folder.
         //
         //Marketindex :
         //Is good for additional information like description, if needed.
-        //To obtain market index details, we need to register and download their asxworkbook. It has a list of all current etfs
+        //To obtain market index details, we need to register and download their asxworkbook.
+        //https://www.marketindex.com.au/dashboard/resources
+        //It has a list of all current etfs
         //The asxworkbook is in xls format, you need to export the etf sheet into marketindex.csv and put it in DATA folder.
 
         //First convert Market index CSV to JSON
@@ -747,7 +750,7 @@ class EtfToolsExtractdata extends BasePackage
                     $navMultiplier = $navMultiplier * $navSplits;
                 }
 
-                $etfNavsArrQuote = array_values($etfNavsArr['quote']);
+                $etfNavsArrQuote = array_values(msort(array: $etfNavsArr['quote'], key: 'timestamp', preserveKey: true));
 
                 if (($etfNavsArrQuote && count($etfNavsArrQuote) === 1) ||
                     (($etfNavsArrQuote && count($etfNavsArrQuote) <= 2) && (isset($etfNavsArrQuote[1]['date']) && $etfNavsArrQuote[0]['date'] === $etfNavsArrQuote[1]['date']))
@@ -936,6 +939,7 @@ class EtfToolsExtractdata extends BasePackage
                             // $dbNav['navs'][$etfNav['date']]['reinvest_diff_percent'] =
                             //     numberFormatPrecision(($etfNav['close'] * 100 / $firstEtfNavs['close'] - 100), 2);
 
+                            // Email from BETASHARES regarding calculations:
                             // Closing market price 5 years ago: $2.48
                             // This is called your 'cost price', and can be obtained by switching from 'total return' to 'price' at the top left of the chart,
                             // and dragging your cursor all the way to the beginning.
@@ -1529,7 +1533,7 @@ class EtfToolsExtractdata extends BasePackage
         });
     }
 
-    protected function fillEtfNavDays($etfNavsArrQuote, $aetfiCode)
+    protected function fillEtfNavDays($etfNavsArrQuote, $etfCode)
     {
         if (!isset($this->parsedCarbon[$this->helper->first($etfNavsArrQuote)['date']])) {
             $this->parsedCarbon[$this->helper->first($etfNavsArrQuote)['date']] = \Carbon\Carbon::parse($this->helper->first($etfNavsArrQuote)['date']);
@@ -1570,7 +1574,7 @@ class EtfToolsExtractdata extends BasePackage
             }
 
             if ($numberOfDays != count($etfNavs)) {
-                throw new \Exception('Cannot process missing AMFI navs correctly for aetfiCode : ' . $aetfiCode);
+                throw new \Exception('Cannot process missing navs correctly for etfCode : ' . $etfCode);
             }
 
             return array_values($etfNavs);
@@ -1723,10 +1727,23 @@ class EtfToolsExtractdata extends BasePackage
             } else {
                 if (isset($data['betashares']['categories'][0])) {
                     $category = strtolower($data['betashares']['categories'][0]);
+
                     if (str_contains('australian', $category)) {
                         $categories[0] = 'Australian';
                     } else if (str_contains('international', $category)) {
                         $categories[0] = 'International';
+                    } else {
+                        $categories[0] = ucfirst($category);
+                    }
+                } else if (isset($data['betashares']['asset_categories'][0])) {
+                    $category = strtolower($data['betashares']['asset_categories'][0]);
+
+                    if (str_contains('australian', $category)) {
+                        $categories[0] = 'Australian';
+                    } else if (str_contains('international', $category)) {
+                        $categories[0] = 'International';
+                    } else {
+                        $categories[0] = ucfirst($category);
                     }
                 }
             }
